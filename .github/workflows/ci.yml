@@ -30,8 +30,8 @@ jobs:
         id: get-version
         run: |
           version=${{ inputs.tag }}
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            version=$(curl -s "https://api.github.com/repos/laverdet/isolated-vm/releases/latest" | jq -r .tag_name)
+          if [ "${{ github.event_name }}" = "schedule" ] || [ -z "${version}" ]; then
+            version=$(curl -sSL https://api.github.com/repos/laverdet/isolated-vm/tags | jq -r '.[0].name')
           fi
           if [ -z "${version}" ] || [ "${version}" == "null" ]; then
             echo "Failed to get version"
