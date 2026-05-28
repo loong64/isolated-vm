@@ -1,11 +1,15 @@
 name: CI
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        default: ''
+        description: 'build tag'
+        type: string
+        required: false
   schedule:
     - cron: '0 10 * * *' # every Sunday at midnight
 
-env:
-  FORCE_COLOR: 1
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -21,7 +25,10 @@ jobs:
       - name: Get Version
         id: get-version
         run: |
-          version=$(curl -s "https://api.github.com/repos/laverdet/isolated-vm/releases/latest" | jq -r .tag_name)
+          version=${{ inputs.tag }}
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            version=$(curl -s "https://api.github.com/repos/laverdet/isolated-vm/releases/latest" | jq -r .tag_name)
+          fi
           if [ -z "${version}" ] || [ "${version}" == "null" ]; then
             echo "Failed to get version"
             exit 1
@@ -40,7 +47,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-qemu:
+  prebuild-linux:
     runs-on: ubuntu-latest
     needs: check-binaries
     if: needs.check-binaries.outputs.create == '1'
@@ -66,36 +73,53 @@ jobs:
       - name: Setup Build
         run: |
           sed -i 's@bullseye@trixie@g' Dockerfile.debian
-          sed -i 's@alpine3.20@alpine3.21@g' Dockerfile.alpine
+          # sed -i 's@alpine3.20@alpine3.21@g' Dockerfile.alpine
           sed -i 's@FROM node@FROM ghcr.io/loong64/node@g' Dockerfile.${{ matrix.os }}
       - name: Build
         run: |
-          docker buildx build --platform linux/${{ matrix.arch }} -f Dockerfile.${{ matrix.os }} --output prebuilds .
+          docker buildx build --platform linux/${{ matrix.arch }} . -f Dockerfile.${{ matrix.os }} --output prebuilds
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: prebuilt-binaries-${{ matrix.os }}
-          path: prebuilds/*
-          retention-days: 7
+          name: prebuilds-${{ matrix.os }}-${{ matrix.arch }}
+          path: prebuilds
 
   release:
     runs-on: ubuntu-slim
-    needs: [check-binaries, build-qemu]
+    needs: [check-binaries, prebuild-linux]
     if: needs.check-binaries.outputs.create == '1'
     steps:
-      - name: Download binaries
+      - uses: actions/checkout@v6
+        with:
+          repository: laverdet/isolated-vm
+          ref: ${{ needs.check-binaries.outputs.version }}
+
+      - name: Use nodejs
+        uses: actions/setup-node@v6
+        with:
+          node-version: latest
+
+      - name: Download all prebuild artifacts
         uses: actions/download-artifact@v8
         with:
-          path: dist
-          pattern: prebuilt-binaries-*
+          pattern: prebuilds-*
           merge-multiple: true
+          path: prebuilds
+
+      - name: Verify bundled prebuilds
+        run: |
+          find prebuilds -type f -name '*.node' | sort
+
+      - name: Pack npm tarball
+        run: |
+          npm pack
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ needs.check-binaries.outputs.version }}
           tag_name: ${{ needs.check-binaries.outputs.version }}
-          files: dist/*
+          files: isolated-*.tgz
           draft: false
           prerelease: false
         env:
