@@ -76,7 +76,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
       - name: Setup Build
         run: |
-          sed -i 's@bullseye@trixie@g' Dockerfile.debian
+          sed -i 's@bookworm@trixie@g' Dockerfile.debian
           sed -i 's@FROM node@FROM ghcr.io/loong64/node@g' Dockerfile.${{ matrix.os }}
       - name: Build
         run: |
